@@ -394,6 +394,277 @@ async def clean_blacklist_periodically():
                 print_info(f"🔄 Очищено {remove_count} прокси из blacklist ({old_count} -> {len(proxy_blacklist)})")
 
 
+async def handle_http_request(reader, writer):
+    """Обрабатывает HTTP запрос для веб-интерфейса"""
+    try:
+        addr = writer.get_extra_info('peername')
+        
+        # Читаем HTTP запрос
+        request_line = await reader.readline()
+        request_line = request_line.decode('utf-8').strip()
+        
+        if not request_line:
+            return
+        
+        # Парсим путь
+        parts = request_line.split()
+        if len(parts) < 2:
+            return
+        
+        path = parts[1]
+        
+        # Читаем заголовки
+        while True:
+            line = await reader.readline()
+            if line == b'\r\n' or line == b'\n' or not line:
+                break
+        
+        # Генерируем ответ
+        if path == '/' or path == '/index.html':
+            response = generate_web_interface()
+        elif path == '/api/status':
+            response = generate_status_json()
+        else:
+            response = generate_404()
+        
+        writer.write(response.encode('utf-8'))
+        await writer.drain()
+        
+    except Exception as e:
+        pass
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except:
+            pass
+
+
+def generate_web_interface():
+    """Генерирует веб-интерфейс"""
+    import json
+    
+    success_rate = 0
+    if total_connections > 0:
+        success_rate = (successful_connections / total_connections * 100)
+    
+    proxy_info = "Не выбран"
+    if current_proxy:
+        proxy_info = f"{current_proxy['ip']}:{current_proxy['port']} ({current_proxy.get('country', 'N/A')})"
+    
+    html = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram SOCKS5 Proxy - Панель управления</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .header {{
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
+        }}
+        h1 {{
+            font-size: 2.5em;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }}
+        .subtitle {{ color: #666; font-size: 1.1em; }}
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }}
+        .stat-card {{
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }}
+        .stat-title {{
+            font-size: 0.9em;
+            color: #999;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }}
+        .stat-value {{
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }}
+        .proxy-info {{
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }}
+        .proxy-info h2 {{
+            color: #667eea;
+            margin-bottom: 15px;
+        }}
+        .info-item {{
+            padding: 10px;
+            margin: 5px 0;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }}
+        .info-label {{
+            font-weight: bold;
+            color: #667eea;
+        }}
+        .status-indicator {{
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }}
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.5; }}
+        }}
+        .footer {{
+            text-align: center;
+            color: white;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Telegram SOCKS5 Proxy</h1>
+            <p class="subtitle">Панель управления и мониторинга</p>
+            <div style="margin-top: 15px;">
+                <span class="status-indicator"></span>
+                <span style="color: #4caf50; font-weight: bold;">Работает</span>
+            </div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-title">✅ Успешных подключений</div>
+                <div class="stat-value">{successful_connections}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">📊 Всего попыток</div>
+                <div class="stat-value">{total_connections}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">📈 Процент успеха</div>
+                <div class="stat-value">{success_rate:.1f}%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">🚫 В blacklist</div>
+                <div class="stat-value">{len(proxy_blacklist)}</div>
+            </div>
+        </div>
+        
+        <div class="proxy-info">
+            <h2>📡 Информация о прокси</h2>
+            <div class="info-item">
+                <span class="info-label">Текущий прокси:</span> {proxy_info}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Локальный адрес:</span> {LOCAL_HOST}:{LOCAL_PORT}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Доступных прокси:</span> {len(proxy_list)}
+            </div>
+            <div class="info-item">
+                <span class="info-label">Неверных SOCKS:</span> {invalid_socks_count}
+            </div>
+        </div>
+        
+        <div class="footer">
+            Powered by Python asyncio ⚡ | Обновляется автоматически
+        </div>
+    </div>
+    
+    <script>
+        setTimeout(() => location.reload(), 5000);
+    </script>
+</body>
+</html>"""
+    
+    response = "HTTP/1.1 200 OK\r\n"
+    response += "Content-Type: text/html; charset=utf-8\r\n"
+    response += f"Content-Length: {len(html.encode('utf-8'))}\r\n"
+    response += "Connection: close\r\n\r\n"
+    response += html
+    
+    return response
+
+
+def generate_status_json():
+    """Генерирует JSON со статусом"""
+    import json
+    
+    success_rate = 0
+    if total_connections > 0:
+        success_rate = (successful_connections / total_connections * 100)
+    
+    data = {
+        "status": "ok",
+        "proxy": {
+            "current": f"{current_proxy['ip']}:{current_proxy['port']}" if current_proxy else None,
+            "country": current_proxy.get('country') if current_proxy else None,
+            "available": len(proxy_list),
+            "blacklisted": len(proxy_blacklist)
+        },
+        "connections": {
+            "successful": successful_connections,
+            "total": total_connections,
+            "success_rate": round(success_rate, 2)
+        },
+        "errors": {
+            "invalid_socks": invalid_socks_count,
+            "connection_errors": connection_errors
+        },
+        "timestamp": int(time.time())
+    }
+    
+    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    
+    response = "HTTP/1.1 200 OK\r\n"
+    response += "Content-Type: application/json; charset=utf-8\r\n"
+    response += f"Content-Length: {len(json_str.encode('utf-8'))}\r\n"
+    response += "Connection: close\r\n\r\n"
+    response += json_str
+    
+    return response
+
+
+def generate_404():
+    """Генерирует 404 страницу"""
+    html = "<h1>404 Not Found</h1>"
+    response = "HTTP/1.1 404 Not Found\r\n"
+    response += "Content-Type: text/html\r\n"
+    response += f"Content-Length: {len(html)}\r\n"
+    response += "Connection: close\r\n\r\n"
+    response += html
+    return response
+
+
 async def main():
     """Главная функция"""
     print_info("=" * 60)
@@ -416,24 +687,39 @@ async def main():
     asyncio.create_task(clean_blacklist_periodically())
     
     # Запускаем SOCKS5 сервер
-    server = await asyncio.start_server(
+    socks_server = await asyncio.start_server(
         handle_socks5_client,
         LOCAL_HOST,
         LOCAL_PORT
     )
     
-    addr = server.sockets[0].getsockname()
+    # Запускаем HTTP сервер (веб-интерфейс)
+    http_server = await asyncio.start_server(
+        handle_http_request,
+        "0.0.0.0",
+        5000
+    )
+    
+    socks_addr = socks_server.sockets[0].getsockname()
+    http_addr = http_server.sockets[0].getsockname()
+    
     print_info("=" * 60)
-    print_info(f"SOCKS5 прокси запущен на {addr[0]}:{addr[1]}")
-    print_info(f"Upstream прокси: {current_proxy['ip']}:{current_proxy['port']}")
+    print_info(f"✅ SOCKS5 прокси запущен на {socks_addr[0]}:{socks_addr[1]}")
+    print_info(f"✅ Веб-интерфейс запущен на http://{http_addr[0]}:{http_addr[1]}")
+    print_info(f"🌍 Upstream прокси: {current_proxy['ip']}:{current_proxy['port']}")
     print_info("=" * 60)
     print_info(f"Настройте Telegram для использования SOCKS5 прокси:")
-    print_info(f"  Сервер: {addr[0]}")
-    print_info(f"  Порт: {addr[1]}")
+    print_info(f"  Сервер: {socks_addr[0]}")
+    print_info(f"  Порт: {socks_addr[1]}")
+    print_info("=" * 60)
+    print_info(f"🌐 Откройте в браузере: http://localhost:{http_addr[1]}")
     print_info("=" * 60)
     
-    async with server:
-        await server.serve_forever()
+    async with socks_server, http_server:
+        await asyncio.gather(
+            socks_server.serve_forever(),
+            http_server.serve_forever()
+        )
 
 
 if __name__ == "__main__":
